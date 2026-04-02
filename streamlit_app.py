@@ -154,11 +154,18 @@ if page == "Watchlist":
                             alerts_generated += 1
 
                         sf.complete_ingestion_log(run_id, len(filings), total_inserted)
-                        st.success(
-                            f"Ingested {len(filings)} filings, "
-                            f"{total_inserted} transactions, "
-                            f"{alerts_generated} alerts generated."
-                        )
+                        if len(filings) == 0 and total_inserted == 0:
+                            st.info(
+                                f"No new filings found for {ingest_ticker}. "
+                                f"Data is already up to date."
+                                + (f" {alerts_generated} alerts generated from existing data." if alerts_generated else "")
+                            )
+                        else:
+                            st.success(
+                                f"Ingested {len(filings)} filings, "
+                                f"{total_inserted} new transactions."
+                                + (f" {alerts_generated} alerts generated." if alerts_generated else "")
+                            )
                     except Exception as e:
                         sf.complete_ingestion_log(run_id, 0, 0, status="FAILED", error=str(e))
                         st.error(f"Ingestion failed: {e}")
