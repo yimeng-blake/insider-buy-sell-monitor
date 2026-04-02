@@ -387,6 +387,33 @@ def _parse_ownership_xml(
             if record:
                 transactions.append(record)
 
+    # Deduplicate M/C transactions that appear in both ND and DV sections.
+    # Exercise (M) and Conversion (C) often show up identically in both
+    # nonDerivativeTransaction and derivativeTransaction. Keep the ND version.
+    # Strategy: collect natural keys, detect duplicates, keep first occurrence
+    # (ND is parsed first so it appears earlier in the list).
+    if any(t["transaction_code"] in ("M", "C") for t in transactions):
+        seen_mc: set[tuple] = set()
+        deduped = []
+        for t in transactions:
+            if t["transaction_code"] in ("M", "C"):
+                key = (
+                    t["accession_number"],
+                    t["insider_cik"],
+                    t["transaction_code"],
+                    str(t["transaction_date"]),
+                    str(t["shares"]),
+                )
+                if key in seen_mc:
+                    logger.debug(
+                        f"Skipping duplicate M/C: {t['insider_name']} "
+                        f"{t['transaction_code']} {t['shares']} shares"
+                    )
+                    continue
+                seen_mc.add(key)
+            deduped.append(t)
+        transactions = deduped
+
     return transactions
 
 

@@ -351,9 +351,18 @@ elif page == "Dashboard":
                                 range=[type_color_map.get(t, "#9E9E9E") for t in active_types],
                             )
 
-                            # Weekly aggregated count by type
+                            # Deduplicate multi-fill rows for counting charts.
+                            # Broker-executed sales often split into multiple rows
+                            # per filing at different price points. Group them into
+                            # one event per (filing, insider, date, code).
+                            event_df = chart_df.drop_duplicates(
+                                subset=["ACCESSION_NUMBER", "INSIDER_NAME",
+                                        "TRANSACTION_DATE", "TRANSACTION_CODE"],
+                            )
+
+                            # Weekly aggregated count by type (using deduplicated events)
                             weekly = (
-                                chart_df.groupby(
+                                event_df.groupby(
                                     [pd.Grouper(key="TRANSACTION_DATE", freq="W"), "Type"]
                                 )
                                 .size()
@@ -403,10 +412,10 @@ elif page == "Dashboard":
                                 )
                                 st.altair_chart(bs_chart, use_container_width=True)
 
-                            # Transaction count by insider
+                            # Transaction count by insider (deduplicated events)
                             st.subheader("Transactions by Insider")
                             insider_counts = (
-                                chart_df.groupby(["INSIDER_NAME", "Type"])
+                                event_df.groupby(["INSIDER_NAME", "Type"])
                                 .size()
                                 .reset_index(name="Count")
                             )
