@@ -217,16 +217,43 @@ elif page == "Dashboard":
                     available = [c for c in display_cols if c in df.columns]
                     df_display = df[available].copy()
 
-                    # Human-readable transaction codes
+                    # Keep raw codes for coloring before mapping labels
+                    raw_codes = df_display["TRANSACTION_CODE"].copy() if "TRANSACTION_CODE" in df_display.columns else pd.Series()
+
+                    # Human-readable transaction codes with emoji indicators
                     code_map = {
-                        "P": "Purchase", "S": "Sale", "A": "Grant",
-                        "D": "Disposition", "M": "Exercise", "G": "Gift",
-                        "F": "Tax Withholding", "C": "Conversion",
+                        "P": "\U0001f7e2 Purchase", "S": "\U0001f534 Sale",
+                        "A": "\U0001f535 Grant", "D": "\U0001f534 Disposition",
+                        "M": "\u26aa Exercise", "G": "\U0001f7e3 Gift",
+                        "F": "\U0001f7e0 Tax Withholding", "C": "\u26aa Conversion",
                     }
                     if "TRANSACTION_CODE" in df_display.columns:
                         df_display["TRANSACTION_CODE"] = df_display["TRANSACTION_CODE"].map(
                             lambda x: code_map.get(x, x)
                         )
+
+                    # Format numeric columns cleanly
+                    def fmt_int(v):
+                        try:
+                            n = float(v)
+                            return f"{n:,.0f}" if pd.notna(n) else "-"
+                        except (ValueError, TypeError):
+                            return "-"
+
+                    def fmt_currency(v):
+                        try:
+                            n = float(v)
+                            return f"${n:,.2f}" if pd.notna(n) and n != 0 else "-"
+                        except (ValueError, TypeError):
+                            return "-"
+
+                    for col in ["SHARES", "SHARES_OWNED_AFTER"]:
+                        if col in df_display.columns:
+                            df_display[col] = df_display[col].apply(fmt_int)
+                    if "PRICE_PER_SHARE" in df_display.columns:
+                        df_display["PRICE_PER_SHARE"] = df_display["PRICE_PER_SHARE"].apply(fmt_currency)
+                    if "TOTAL_VALUE" in df_display.columns:
+                        df_display["TOTAL_VALUE"] = df_display["TOTAL_VALUE"].apply(fmt_currency)
 
                     col_labels = {
                         "TRANSACTION_DATE": "Date", "INSIDER_NAME": "Insider",
@@ -235,44 +262,86 @@ elif page == "Dashboard":
                         "TOTAL_VALUE": "Value", "SHARES_OWNED_AFTER": "Owned After",
                     }
                     df_display.rename(columns=col_labels, inplace=True)
-                    df_display = df_display.astype(str).replace("None", "-").replace("nan", "-")
 
-                    st.dataframe(df_display, width="stretch", hide_index=True)
+                    # Row background coloring by transaction type
+                    row_colors = {
+                        "P": "background-color: rgba(76, 175, 80, 0.12)",   # green
+                        "S": "background-color: rgba(244, 67, 54, 0.12)",   # red
+                        "A": "background-color: rgba(33, 150, 243, 0.10)",  # blue
+                        "D": "background-color: rgba(244, 67, 54, 0.12)",   # red
+                        "M": "background-color: rgba(158, 158, 158, 0.10)", # gray
+                        "G": "background-color: rgba(156, 39, 176, 0.10)",  # purple
+                        "F": "background-color: rgba(255, 152, 0, 0.12)",   # orange
+                        "C": "background-color: rgba(158, 158, 158, 0.10)", # gray
+                    }
+
+                    def color_rows(row_idx):
+                        code = raw_codes.iloc[row_idx] if row_idx < len(raw_codes) else ""
+                        style = row_colors.get(code, "")
+                        return [style] * len(df_display.columns)
+
+                    styled = df_display.style.apply(
+                        lambda x: color_rows(x.name), axis=1
+                    )
+
+                    st.dataframe(styled, width="stretch", hide_index=True)
 
                     # --- Charts ---
                     st.subheader("Activity Over Time")
 
                     if "TRANSACTION_DATE" in df.columns and "TRANSACTION_CODE" in df.columns:
-                        chart_df = df[df["TRANSACTION_CODE"].isin(["P", "S"])].copy()
+                        # Include all meaningful transaction types
+                        type_labels = {
+                            "P": "Purchase", "S": "Sale", "A": "Grant",
+                            "F": "Tax Withholding", "G": "Gift",
+                            "M": "Exercise", "D": "Disposition", "C": "Conversion",
+                        }
+                        chart_df = df[df["TRANSACTION_CODE"].isin(type_labels.keys())].copy()
                         if not chart_df.empty:
                             chart_df["TRANSACTION_DATE"] = pd.to_datetime(chart_df["TRANSACTION_DATE"])
-                            chart_df["Direction"] = chart_df["TRANSACTION_CODE"].map(
-                                {"P": "Buy", "S": "Sell"}
-                            )
+                            chart_df["Type"] = chart_df["TRANSACTION_CODE"].map(type_labels)
 
-                            # Weekly aggregated value
-                            if "TOTAL_VALUE" in chart_df.columns:
-                                daily = (
-                                    chart_df.groupby(
+                            # Weekly aggregated count by type
+                            weekly = (
+                                chart_df.groupby(
+                                    [pd.Grouper(key="TRANSACTION_DATE", freq="W"), "Type"]
+                                )
+                                .size()
+                                .reset_index(name="Count")
+                            )
+                            weekly_pivot = weekly.pivot(
+                                index="TRANSACTION_DATE", columns="Type", values="Count"
+                            ).fillna(0)
+                            st.bar_chart(weekly_pivot)
+
+                            # Buy vs Sell value comparison (if both exist)
+                            buy_sell = chart_df[chart_df["TRANSACTION_CODE"].isin(["P", "S"])].copy()
+                            if not buy_sell.empty and "TOTAL_VALUE" in buy_sell.columns:
+                                buy_sell["Direction"] = buy_sell["TRANSACTION_CODE"].map(
+                                    {"P": "Buy", "S": "Sell"}
+                                )
+                                daily_val = (
+                                    buy_sell.groupby(
                                         [pd.Grouper(key="TRANSACTION_DATE", freq="W"), "Direction"]
                                     )["TOTAL_VALUE"]
                                     .sum()
                                     .reset_index()
                                 )
-                                daily_pivot = daily.pivot(
+                                val_pivot = daily_val.pivot(
                                     index="TRANSACTION_DATE", columns="Direction", values="TOTAL_VALUE"
                                 ).fillna(0)
-                                st.bar_chart(daily_pivot)
+                                st.caption("Buy vs Sell Value ($)")
+                                st.bar_chart(val_pivot)
 
                             # Transaction count by insider
                             st.subheader("Transactions by Insider")
                             insider_counts = (
-                                chart_df.groupby(["INSIDER_NAME", "Direction"])
+                                chart_df.groupby(["INSIDER_NAME", "Type"])
                                 .size()
                                 .reset_index(name="Count")
                             )
                             insider_pivot = insider_counts.pivot(
-                                index="INSIDER_NAME", columns="Direction", values="Count"
+                                index="INSIDER_NAME", columns="Type", values="Count"
                             ).fillna(0)
                             st.bar_chart(insider_pivot)
                 else:
