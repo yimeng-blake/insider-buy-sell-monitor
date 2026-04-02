@@ -233,13 +233,13 @@ def get_transactions(
         return _execute(
             "SELECT * FROM TRANSACTIONS "
             "WHERE TICKER = %s AND FILING_DATE >= %s "
-            "ORDER BY FILING_DATE DESC LIMIT %s",
+            "ORDER BY TRANSACTION_DATE DESC, FILING_DATE DESC LIMIT %s",
             (ticker.upper(), cutoff, limit),
         )
     return _execute(
         "SELECT * FROM TRANSACTIONS "
         "WHERE FILING_DATE >= %s "
-        "ORDER BY FILING_DATE DESC LIMIT %s",
+        "ORDER BY TRANSACTION_DATE DESC, FILING_DATE DESC LIMIT %s",
         (cutoff, limit),
     )
 
