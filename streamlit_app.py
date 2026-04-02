@@ -65,7 +65,7 @@ if page == "Watchlist":
                 df_display.rename(columns=col_labels, inplace=True)
                 if "Added" in df_display.columns:
                     df_display["Added"] = pd.to_datetime(df_display["Added"]).dt.strftime("%Y-%m-%d")
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
+                st.dataframe(df_display, width="stretch", hide_index=True)
             else:
                 st.info("Watchlist is empty. Add a ticker to get started.")
         else:
@@ -235,9 +235,9 @@ elif page == "Dashboard":
                         "TOTAL_VALUE": "Value", "SHARES_OWNED_AFTER": "Owned After",
                     }
                     df_display.rename(columns=col_labels, inplace=True)
-                    df_display.fillna("-", inplace=True)
+                    df_display = df_display.astype(str).replace("None", "-").replace("nan", "-")
 
-                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    st.dataframe(df_display, width="stretch", hide_index=True)
 
                     # --- Charts ---
                     st.subheader("Activity Over Time")
@@ -375,7 +375,7 @@ elif page == "Analytics":
                 display_df.columns = ["Ticker", "Buys", "Sells", "Buy Value", "Sell Value", "Unique Insiders", "Sentiment"]
                 display_df["Buy Value"] = display_df["Buy Value"].apply(lambda x: f"${x:,.0f}")
                 display_df["Sell Value"] = display_df["Sell Value"].apply(lambda x: f"${x:,.0f}")
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                st.dataframe(display_df, width="stretch", hide_index=True)
 
                 # Net sentiment overview
                 st.subheader("Sentiment Overview")
