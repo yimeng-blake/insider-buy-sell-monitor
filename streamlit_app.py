@@ -244,10 +244,10 @@ elif page == "Dashboard":
                         "TOTAL_VALUE", "SHARES_OWNED_AFTER",
                     ]
                     available = [c for c in display_cols if c in df_filtered.columns]
-                    df_display = df_filtered[available].copy()
+                    df_display = df_filtered[available].copy().reset_index(drop=True)
 
                     # Keep raw codes for coloring before mapping labels
-                    raw_codes = df_display["TRANSACTION_CODE"].copy() if "TRANSACTION_CODE" in df_display.columns else pd.Series()
+                    raw_codes = df_display["TRANSACTION_CODE"].tolist() if "TRANSACTION_CODE" in df_display.columns else []
 
                     # Human-readable transaction codes with emoji indicators
                     code_map = {
@@ -303,10 +303,11 @@ elif page == "Dashboard":
                         "G": "background-color: rgba(156, 39, 176, 0.10)",  # purple
                         "F": "background-color: rgba(255, 152, 0, 0.12)",   # orange
                         "C": "background-color: rgba(158, 158, 158, 0.10)", # gray
+                        "J": "background-color: rgba(158, 158, 158, 0.10)", # gray
                     }
 
                     def color_rows(row_idx):
-                        code = raw_codes.iloc[row_idx] if row_idx < len(raw_codes) else ""
+                        code = raw_codes[row_idx] if row_idx < len(raw_codes) else ""
                         style = row_colors.get(code, "")
                         return [style] * len(df_display.columns)
 
