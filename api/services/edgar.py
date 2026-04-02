@@ -252,52 +252,70 @@ def parse_form4_xml(
 
     Uses www.sec.gov for archive access (data.sec.gov doesn't serve all archives).
     The filer CIK is extracted from the accession number prefix.
+    If that fails (e.g. third-party filing agents), falls back to the company CIK.
     If primary_doc is provided, fetches the XML directly (1 API call).
     Otherwise falls back to fetching the index page first (2 API calls).
     """
     accession_clean = accession_number.replace("-", "")
-    # The accession number prefix is the filer CIK (reporting owner, not the issuer)
+    # The accession number prefix is the filer CIK (could be a filing agent)
     filer_cik = str(int(accession_number.split("-")[0]))
-    archive_base = (
-        f"https://www.sec.gov/Archives/edgar/data/"
-        f"{filer_cik}/{accession_clean}"
-    )
+    company_cik_clean = str(int(cik))
+
+    # Build candidate base URLs — filer CIK first, then company CIK as fallback
+    base_ciks = [filer_cik]
+    if company_cik_clean != filer_cik:
+        base_ciks.append(company_cik_clean)
 
     xml_text = None
 
-    # Strategy 1: Use primary_doc if available (saves an API call)
-    if primary_doc:
-        # Strip XSL prefix like "xslF345X05/" -- the raw XML is the base filename
-        xml_filename = primary_doc.split("/")[-1] if "/" in primary_doc else primary_doc
-        xml_url = f"{archive_base}/{xml_filename}"
-        try:
-            resp = _rate_limited_get(xml_url)
-            xml_text = resp.text
-        except Exception as e:
-            logger.warning(
-                f"Failed to fetch primary doc for {accession_number}: {e}"
-            )
+    for base_cik in base_ciks:
+        archive_base = (
+            f"https://www.sec.gov/Archives/edgar/data/"
+            f"{base_cik}/{accession_clean}"
+        )
 
-    # Strategy 2: Fall back to index page to discover the XML filename
-    if xml_text is None:
-        index_url = f"{archive_base}/index.json"
-        try:
-            resp = _rate_limited_get(index_url)
-            index_data = resp.json()
-            xml_filename = _find_ownership_xml(index_data)
-            if not xml_filename:
-                logger.warning(
-                    f"No ownership XML found in filing {accession_number}"
-                )
-                return []
+        # Strategy 1: Use primary_doc if available (saves an API call)
+        if primary_doc and xml_text is None:
+            xml_filename = primary_doc.split("/")[-1] if "/" in primary_doc else primary_doc
             xml_url = f"{archive_base}/{xml_filename}"
-            resp = _rate_limited_get(xml_url)
-            xml_text = resp.text
-        except Exception as e:
-            logger.warning(
-                f"Failed to fetch XML for {accession_number}: {e}"
-            )
-            return []
+            try:
+                resp = _rate_limited_get(xml_url)
+                xml_text = resp.text
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch primary doc for {accession_number} "
+                    f"via CIK {base_cik}: {e}"
+                )
+
+        # Strategy 2: Fall back to index page to discover the XML filename
+        if xml_text is None:
+            index_url = f"{archive_base}/index.json"
+            try:
+                resp = _rate_limited_get(index_url)
+                index_data = resp.json()
+                xml_filename = _find_ownership_xml(index_data)
+                if not xml_filename:
+                    logger.warning(
+                        f"No ownership XML found in filing {accession_number} "
+                        f"via CIK {base_cik}"
+                    )
+                    continue
+                xml_url = f"{archive_base}/{xml_filename}"
+                resp = _rate_limited_get(xml_url)
+                xml_text = resp.text
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch XML for {accession_number} "
+                    f"via CIK {base_cik}: {e}"
+                )
+                continue
+
+        if xml_text is not None:
+            break
+
+    if xml_text is None:
+        logger.warning(f"Could not fetch XML for {accession_number} from any CIK path")
+        return []
 
     return _parse_ownership_xml(xml_text, accession_number, filing_date, ticker)
 
