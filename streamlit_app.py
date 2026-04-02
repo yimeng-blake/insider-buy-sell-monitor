@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import datetime
 
 from api.services import snowflake as sf
@@ -336,6 +337,20 @@ elif page == "Dashboard":
                             chart_df["TRANSACTION_DATE"] = pd.to_datetime(chart_df["TRANSACTION_DATE"])
                             chart_df["Type"] = chart_df["TRANSACTION_CODE"].map(type_labels)
 
+                            # Consistent color scale matching row colors
+                            type_color_map = {
+                                "Purchase": "#4CAF50", "Sale": "#F44336",
+                                "Grant": "#2196F3", "Gift": "#9C27B0",
+                                "Exercise": "#FF9800", "Tax Withholding": "#607D8B",
+                                "Disposition": "#795548", "Conversion": "#00BCD4",
+                                "Other": "#9E9E9E",
+                            }
+                            active_types = sorted(chart_df["Type"].unique().tolist())
+                            color_scale = alt.Scale(
+                                domain=active_types,
+                                range=[type_color_map.get(t, "#9E9E9E") for t in active_types],
+                            )
+
                             # Weekly aggregated count by type
                             weekly = (
                                 chart_df.groupby(
@@ -344,10 +359,18 @@ elif page == "Dashboard":
                                 .size()
                                 .reset_index(name="Count")
                             )
-                            weekly_pivot = weekly.pivot(
-                                index="TRANSACTION_DATE", columns="Type", values="Count"
-                            ).fillna(0)
-                            st.bar_chart(weekly_pivot)
+                            activity_chart = (
+                                alt.Chart(weekly)
+                                .mark_bar()
+                                .encode(
+                                    x=alt.X("TRANSACTION_DATE:T", title="Week"),
+                                    y=alt.Y("Count:Q", title="Transactions"),
+                                    color=alt.Color("Type:N", scale=color_scale),
+                                    tooltip=["TRANSACTION_DATE:T", "Type:N", "Count:Q"],
+                                )
+                                .properties(height=350)
+                            )
+                            st.altair_chart(activity_chart, use_container_width=True)
 
                             # Buy vs Sell value comparison (if both exist)
                             buy_sell = chart_df[chart_df["TRANSACTION_CODE"].isin(["P", "S"])].copy()
@@ -362,11 +385,23 @@ elif page == "Dashboard":
                                     .sum()
                                     .reset_index()
                                 )
-                                val_pivot = daily_val.pivot(
-                                    index="TRANSACTION_DATE", columns="Direction", values="TOTAL_VALUE"
-                                ).fillna(0)
+                                bs_color = alt.Scale(
+                                    domain=["Buy", "Sell"],
+                                    range=["#4CAF50", "#F44336"],
+                                )
                                 st.caption("Buy vs Sell Value ($)")
-                                st.bar_chart(val_pivot)
+                                bs_chart = (
+                                    alt.Chart(daily_val)
+                                    .mark_bar()
+                                    .encode(
+                                        x=alt.X("TRANSACTION_DATE:T", title="Week"),
+                                        y=alt.Y("TOTAL_VALUE:Q", title="Value ($)"),
+                                        color=alt.Color("Direction:N", scale=bs_color),
+                                        tooltip=["TRANSACTION_DATE:T", "Direction:N", "TOTAL_VALUE:Q"],
+                                    )
+                                    .properties(height=350)
+                                )
+                                st.altair_chart(bs_chart, use_container_width=True)
 
                             # Transaction count by insider
                             st.subheader("Transactions by Insider")
@@ -375,10 +410,19 @@ elif page == "Dashboard":
                                 .size()
                                 .reset_index(name="Count")
                             )
-                            insider_pivot = insider_counts.pivot(
-                                index="INSIDER_NAME", columns="Type", values="Count"
-                            ).fillna(0)
-                            st.bar_chart(insider_pivot)
+                            insider_chart = (
+                                alt.Chart(insider_counts)
+                                .mark_bar()
+                                .encode(
+                                    x=alt.X("INSIDER_NAME:N", title="Insider", sort="-y",
+                                            axis=alt.Axis(labelAngle=0)),
+                                    y=alt.Y("Count:Q", title="Transactions"),
+                                    color=alt.Color("Type:N", scale=color_scale),
+                                    tooltip=["INSIDER_NAME:N", "Type:N", "Count:Q"],
+                                )
+                                .properties(height=400)
+                            )
+                            st.altair_chart(insider_chart, use_container_width=True)
                 else:
                     st.info(f"No transactions found for {selected_ticker} in the last {days} days.")
             else:
