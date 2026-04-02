@@ -220,10 +220,10 @@ elif page == "Dashboard":
                     code_labels = {
                         "P": "Purchase", "S": "Sale", "A": "Grant",
                         "D": "Disposition", "M": "Exercise", "G": "Gift",
-                        "F": "Tax Withholding", "C": "Conversion",
+                        "F": "Tax Withholding", "C": "Conversion", "J": "Other",
                     }
                     available_codes = df["TRANSACTION_CODE"].unique().tolist() if "TRANSACTION_CODE" in df.columns else []
-                    filter_options = {code_labels.get(c, c): c for c in available_codes if c in code_labels}
+                    filter_options = {code_labels.get(c, c): c for c in available_codes}
 
                     selected_types = st.multiselect(
                         "Filter by transaction type",
@@ -255,6 +255,7 @@ elif page == "Dashboard":
                         "A": "\U0001f535 Grant", "D": "\U0001f534 Disposition",
                         "M": "\u26aa Exercise", "G": "\U0001f7e3 Gift",
                         "F": "\U0001f7e0 Tax Withholding", "C": "\u26aa Conversion",
+                        "J": "\u26aa Other",
                     }
                     if "TRANSACTION_CODE" in df_display.columns:
                         df_display["TRANSACTION_CODE"] = df_display["TRANSACTION_CODE"].map(
@@ -324,6 +325,7 @@ elif page == "Dashboard":
                             "P": "Purchase", "S": "Sale", "A": "Grant",
                             "F": "Tax Withholding", "G": "Gift",
                             "M": "Exercise", "D": "Disposition", "C": "Conversion",
+                            "J": "Other",
                         }
                         chart_df = df_filtered[df_filtered["TRANSACTION_CODE"].isin(type_labels.keys())].copy()
                         if not chart_df.empty:
