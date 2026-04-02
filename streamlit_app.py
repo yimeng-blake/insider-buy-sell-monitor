@@ -216,13 +216,35 @@ elif page == "Dashboard":
             if txns:
                 df = pd.DataFrame(txns)
                 if not df.empty:
+                    # Transaction type filter
+                    code_labels = {
+                        "P": "Purchase", "S": "Sale", "A": "Grant",
+                        "D": "Disposition", "M": "Exercise", "G": "Gift",
+                        "F": "Tax Withholding", "C": "Conversion",
+                    }
+                    available_codes = df["TRANSACTION_CODE"].unique().tolist() if "TRANSACTION_CODE" in df.columns else []
+                    filter_options = {code_labels.get(c, c): c for c in available_codes if c in code_labels}
+
+                    selected_types = st.multiselect(
+                        "Filter by transaction type",
+                        options=list(filter_options.keys()),
+                        default=list(filter_options.keys()),
+                        key="txn_type_filter",
+                    )
+                    selected_codes = [filter_options[t] for t in selected_types]
+
+                    if selected_codes:
+                        df_filtered = df[df["TRANSACTION_CODE"].isin(selected_codes)].copy()
+                    else:
+                        df_filtered = df.copy()
+
                     display_cols = [
                         "TRANSACTION_DATE", "INSIDER_NAME", "INSIDER_TITLE",
                         "TRANSACTION_CODE", "SHARES", "PRICE_PER_SHARE",
                         "TOTAL_VALUE", "SHARES_OWNED_AFTER",
                     ]
-                    available = [c for c in display_cols if c in df.columns]
-                    df_display = df[available].copy()
+                    available = [c for c in display_cols if c in df_filtered.columns]
+                    df_display = df_filtered[available].copy()
 
                     # Keep raw codes for coloring before mapping labels
                     raw_codes = df_display["TRANSACTION_CODE"].copy() if "TRANSACTION_CODE" in df_display.columns else pd.Series()
@@ -296,14 +318,14 @@ elif page == "Dashboard":
                     # --- Charts ---
                     st.subheader("Activity Over Time")
 
-                    if "TRANSACTION_DATE" in df.columns and "TRANSACTION_CODE" in df.columns:
+                    if "TRANSACTION_DATE" in df_filtered.columns and "TRANSACTION_CODE" in df_filtered.columns:
                         # Include all meaningful transaction types
                         type_labels = {
                             "P": "Purchase", "S": "Sale", "A": "Grant",
                             "F": "Tax Withholding", "G": "Gift",
                             "M": "Exercise", "D": "Disposition", "C": "Conversion",
                         }
-                        chart_df = df[df["TRANSACTION_CODE"].isin(type_labels.keys())].copy()
+                        chart_df = df_filtered[df_filtered["TRANSACTION_CODE"].isin(type_labels.keys())].copy()
                         if not chart_df.empty:
                             chart_df["TRANSACTION_DATE"] = pd.to_datetime(chart_df["TRANSACTION_DATE"])
                             chart_df["Type"] = chart_df["TRANSACTION_CODE"].map(type_labels)
