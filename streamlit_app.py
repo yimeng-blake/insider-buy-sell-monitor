@@ -64,7 +64,7 @@ if page == "Watchlist":
                 }
                 df_display.rename(columns=col_labels, inplace=True)
                 if "Added" in df_display.columns:
-                    df_display["Added"] = pd.to_datetime(df_display["Added"]).dt.strftime("%Y-%m-%d")
+                    df_display["Added"] = pd.to_datetime(df_display["Added"], utc=True).dt.strftime("%Y-%m-%d")
                 st.dataframe(df_display, width="stretch", hide_index=True)
             else:
                 st.info("Watchlist is empty. Add a ticker to get started.")
