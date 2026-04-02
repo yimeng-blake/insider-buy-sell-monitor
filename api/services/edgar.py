@@ -466,14 +466,14 @@ def _extract_title(relationship) -> str:
     if relationship is None:
         return "Unknown"
     titles = []
-    if _text(relationship, "isDirector", "") == "1":
+    if _text(relationship, "isDirector", "").lower() in ("1", "true"):
         titles.append("Director")
-    if _text(relationship, "isOfficer", "") == "1":
+    if _text(relationship, "isOfficer", "").lower() in ("1", "true"):
         officer_title = _text(relationship, "officerTitle", "Officer")
         titles.append(officer_title)
-    if _text(relationship, "isTenPercentOwner", "") == "1":
+    if _text(relationship, "isTenPercentOwner", "").lower() in ("1", "true"):
         titles.append("10% Owner")
-    if _text(relationship, "isOther", "") == "1":
+    if _text(relationship, "isOther", "").lower() in ("1", "true"):
         other = _text(relationship, "otherText", "Other")
         titles.append(other)
     return ", ".join(titles) if titles else "Unknown"
