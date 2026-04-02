@@ -227,10 +227,11 @@ elif page == "Dashboard":
                     available_codes = df["TRANSACTION_CODE"].unique().tolist() if "TRANSACTION_CODE" in df.columns else []
                     filter_options = {code_labels.get(c, c): c for c in available_codes}
 
+                    default_types = [l for l, c in filter_options.items() if c in ("S", "P")]
                     selected_types = st.multiselect(
                         "Filter by transaction type",
                         options=list(filter_options.keys()),
-                        default=list(filter_options.keys()),
+                        default=default_types,
                         key="txn_type_filter",
                     )
                     selected_codes = [filter_options[t] for t in selected_types]
