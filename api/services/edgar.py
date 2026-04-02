@@ -501,11 +501,16 @@ def sanitize_transactions(
 
     Mutates the transaction dicts in place.
     """
-    # Collect prices from this batch for fallback reference
+    # Exercise (M) and Conversion (C) use strike/conversion prices that are
+    # legitimately far from market price — exclude from sanity checking.
+    SKIP_CODES = {"M", "C"}
+
+    # Collect prices from this batch for fallback reference (excluding M/C)
     batch_prices = [
         txn["price_per_share"]
         for txn in transactions
         if txn.get("price_per_share") and txn["price_per_share"] > 0
+        and txn.get("transaction_code") not in SKIP_CODES
     ]
 
     # Determine the reference price
@@ -519,6 +524,8 @@ def sanitize_transactions(
     for txn in transactions:
         price = txn.get("price_per_share")
         if not price or price <= 0:
+            continue
+        if txn.get("transaction_code") in SKIP_CODES:
             continue
 
         ratio = price / ref

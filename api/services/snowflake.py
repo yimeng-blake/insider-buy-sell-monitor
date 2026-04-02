@@ -232,6 +232,7 @@ def get_recent_median_price(ticker: str, days: int = 90) -> Optional[float]:
         "SELECT MEDIAN(PRICE_PER_SHARE) AS MED_PRICE "
         "FROM TRANSACTIONS "
         "WHERE TICKER = %s AND PRICE_PER_SHARE IS NOT NULL AND PRICE_PER_SHARE > 0 "
+        "AND TRANSACTION_CODE NOT IN ('M', 'C') "
         "AND TRANSACTION_DATE >= DATEADD('day', -%s, CURRENT_DATE())",
         (ticker.upper(), days),
     )
