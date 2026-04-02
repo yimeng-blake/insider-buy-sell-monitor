@@ -23,32 +23,30 @@ def run_anomaly_detection(ticker: str, days: int = 90) -> list[dict]:
 
 def _detect_large_transactions(ticker: str, days: int) -> list[dict]:
     """Flag transactions where value > 2x the insider's historical average."""
-    session = sf.get_session()
     cutoff = date.today() - timedelta(days=days)
 
-    rows = session.sql(
+    rows = sf._execute(
         "WITH insider_avg AS ( "
         "  SELECT INSIDER_CIK, AVG(ABS(TOTAL_VALUE)) AS AVG_VALUE "
         "  FROM TRANSACTIONS "
-        "  WHERE TICKER = :1 AND TOTAL_VALUE IS NOT NULL "
+        "  WHERE TICKER = %s AND TOTAL_VALUE IS NOT NULL "
         "  GROUP BY INSIDER_CIK "
         "  HAVING COUNT(*) >= 2 "
         "), "
         "recent_txns AS ( "
         "  SELECT * FROM TRANSACTIONS "
-        "  WHERE TICKER = :1 AND FILING_DATE >= :2 AND TOTAL_VALUE IS NOT NULL "
+        "  WHERE TICKER = %s AND FILING_DATE >= %s AND TOTAL_VALUE IS NOT NULL "
         ") "
         "SELECT r.*, a.AVG_VALUE "
         "FROM recent_txns r "
         "JOIN insider_avg a ON r.INSIDER_CIK = a.INSIDER_CIK "
         "WHERE ABS(r.TOTAL_VALUE) > a.AVG_VALUE * 2 "
         "ORDER BY r.FILING_DATE DESC",
-        params=[ticker.upper(), cutoff],
-    ).collect()
+        (ticker.upper(), ticker.upper(), cutoff),
+    )
 
     alerts = []
-    for row in rows:
-        r = row.as_dict()
+    for r in rows:
         code = r["TRANSACTION_CODE"]
         action = "purchase" if code == "P" else "sale" if code == "S" else f"transaction ({code})"
         value = abs(r["TOTAL_VALUE"])
@@ -72,15 +70,14 @@ def _detect_large_transactions(ticker: str, days: int) -> list[dict]:
 
 def _detect_cluster_activity(ticker: str, days: int) -> list[dict]:
     """Flag when 3+ insiders trade in the same direction within 7 days."""
-    session = sf.get_session()
     cutoff = date.today() - timedelta(days=days)
 
-    rows = session.sql(
+    rows = sf._execute(
         "WITH directional AS ( "
         "  SELECT INSIDER_CIK, INSIDER_NAME, TRANSACTION_DATE, TRANSACTION_CODE, "
         "    TOTAL_VALUE, TRANSACTION_ID "
         "  FROM TRANSACTIONS "
-        "  WHERE TICKER = :1 AND FILING_DATE >= :2 "
+        "  WHERE TICKER = %s AND FILING_DATE >= %s "
         "    AND TRANSACTION_CODE IN ('P', 'S') "
         ") "
         "SELECT a.TRANSACTION_CODE AS DIRECTION, "
@@ -99,13 +96,12 @@ def _detect_cluster_activity(ticker: str, days: int) -> list[dict]:
         "  DATE_TRUNC('week', a.TRANSACTION_DATE) "
         "HAVING COUNT(DISTINCT a.INSIDER_CIK) >= 3 "
         "ORDER BY WINDOW_START DESC",
-        params=[ticker.upper(), cutoff],
-    ).collect()
+        (ticker.upper(), cutoff),
+    )
 
     alerts = []
     seen_windows = set()
-    for row in rows:
-        r = row.as_dict()
+    for r in rows:
         direction = "buying" if r["DIRECTION"] == "P" else "selling"
         key = f"{r['DIRECTION']}_{r['WINDOW_START']}"
         if key in seen_windows:
@@ -130,39 +126,37 @@ def _detect_cluster_activity(ticker: str, days: int) -> list[dict]:
 
 def _detect_unusual_frequency(ticker: str, days: int) -> list[dict]:
     """Flag insiders trading significantly more often than their baseline."""
-    session = sf.get_session()
     cutoff = date.today() - timedelta(days=days)
 
-    rows = session.sql(
+    rows = sf._execute(
         "WITH historical AS ( "
         "  SELECT INSIDER_CIK, INSIDER_NAME, "
         "    COUNT(*) AS TOTAL_TXNS, "
         "    DATEDIFF('month', MIN(TRANSACTION_DATE), MAX(TRANSACTION_DATE)) + 1 AS MONTHS_ACTIVE, "
         "    COUNT(*) / NULLIF(DATEDIFF('month', MIN(TRANSACTION_DATE), MAX(TRANSACTION_DATE)) + 1, 0) AS MONTHLY_AVG "
         "  FROM TRANSACTIONS "
-        "  WHERE TICKER = :1 "
+        "  WHERE TICKER = %s "
         "  GROUP BY INSIDER_CIK, INSIDER_NAME "
         "  HAVING DATEDIFF('month', MIN(TRANSACTION_DATE), MAX(TRANSACTION_DATE)) >= 3 "
         "), "
         "recent AS ( "
         "  SELECT INSIDER_CIK, COUNT(*) AS RECENT_COUNT "
         "  FROM TRANSACTIONS "
-        "  WHERE TICKER = :1 AND FILING_DATE >= :2 "
+        "  WHERE TICKER = %s AND FILING_DATE >= %s "
         "  GROUP BY INSIDER_CIK "
         ") "
         "SELECT h.INSIDER_CIK, h.INSIDER_NAME, h.MONTHLY_AVG, "
         "  r.RECENT_COUNT, "
-        "  r.RECENT_COUNT / NULLIF(h.MONTHLY_AVG * (:3 / 30.0), 0) AS FREQUENCY_RATIO "
+        "  r.RECENT_COUNT / NULLIF(h.MONTHLY_AVG * (%s / 30.0), 0) AS FREQUENCY_RATIO "
         "FROM historical h "
         "JOIN recent r ON h.INSIDER_CIK = r.INSIDER_CIK "
-        "WHERE r.RECENT_COUNT > h.MONTHLY_AVG * (:3 / 30.0) * 2 "
+        "WHERE r.RECENT_COUNT > h.MONTHLY_AVG * (%s / 30.0) * 2 "
         "ORDER BY FREQUENCY_RATIO DESC",
-        params=[ticker.upper(), cutoff, days],
-    ).collect()
+        (ticker.upper(), ticker.upper(), cutoff, days, days),
+    )
 
     alerts = []
-    for row in rows:
-        r = row.as_dict()
+    for r in rows:
         ratio = r.get("FREQUENCY_RATIO", 0) or 0
 
         alerts.append({
