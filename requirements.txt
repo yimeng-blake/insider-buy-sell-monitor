@@ -1,6 +1,6 @@
+setuptools>=70.0.0
 streamlit>=1.41.0,<2.0
 snowflake-snowpark-python==1.23.0
-setuptools
 requests>=2.31.0
 python-dotenv>=1.0.0
 pandas>=1.5.0
