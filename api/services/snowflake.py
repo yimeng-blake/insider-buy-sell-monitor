@@ -222,6 +222,24 @@ def insert_transactions(transactions: list[dict]) -> int:
     return inserted
 
 
+def get_recent_median_price(ticker: str, days: int = 90) -> Optional[float]:
+    """Get the median price per share for a ticker over the last N days.
+
+    Used as a reference price for sanity-checking newly ingested prices.
+    Returns None if no priced transactions exist in the window.
+    """
+    rows = _execute(
+        "SELECT MEDIAN(PRICE_PER_SHARE) AS MED_PRICE "
+        "FROM TRANSACTIONS "
+        "WHERE TICKER = %s AND PRICE_PER_SHARE IS NOT NULL AND PRICE_PER_SHARE > 0 "
+        "AND TRANSACTION_DATE >= DATEADD('day', -%s, CURRENT_DATE())",
+        (ticker.upper(), days),
+    )
+    if rows and rows[0]["MED_PRICE"] is not None:
+        return float(rows[0]["MED_PRICE"])
+    return None
+
+
 def get_transactions(
     ticker: Optional[str] = None,
     days: int = 90,

@@ -11,6 +11,8 @@ All analysis operates on the database, never on live API calls.
 
 import hashlib
 import logging
+import math
+import statistics
 import time
 from datetime import date, datetime
 from typing import Optional
@@ -459,6 +461,75 @@ def _parse_transaction_element(
         "shares_owned_after": owned_after,
         "direct_or_indirect": direct_indirect,
     }
+
+
+def sanitize_transactions(
+    transactions: list[dict], reference_price: Optional[float] = None
+) -> None:
+    """Check transaction prices for obvious data-entry errors and auto-correct.
+
+    Compares each price against a reference (historical median or batch median).
+    Prices off by >=50x are auto-corrected by the nearest power of 10.
+    Prices off by 10x-50x are logged as warnings but not modified (could be splits).
+
+    Mutates the transaction dicts in place.
+    """
+    # Collect prices from this batch for fallback reference
+    batch_prices = [
+        txn["price_per_share"]
+        for txn in transactions
+        if txn.get("price_per_share") and txn["price_per_share"] > 0
+    ]
+
+    # Determine the reference price
+    ref = reference_price
+    if ref is None and len(batch_prices) >= 3:
+        ref = statistics.median(batch_prices)
+
+    if ref is None or ref <= 0:
+        return  # Not enough data to validate
+
+    for txn in transactions:
+        price = txn.get("price_per_share")
+        if not price or price <= 0:
+            continue
+
+        ratio = price / ref
+        if ratio < 1:
+            ratio = 1 / ratio
+            direction = "low"
+        else:
+            direction = "high"
+
+        if ratio >= 50:
+            # Egregious outlier — auto-correct by nearest power of 10
+            power = round(math.log10(ratio))
+            if power < 1:
+                continue
+            divisor = 10 ** power
+            if direction == "high":
+                new_price = price / divisor
+            else:
+                new_price = price * divisor
+            new_price = round(new_price, 4)
+            old_total = txn.get("total_value")
+            new_total = (txn["shares"] * new_price) if txn.get("shares") else None
+            logger.warning(
+                f"Price sanity fix [{txn.get('ticker', '?')}]: "
+                f"{txn.get('insider_name', '?')} on {txn.get('transaction_date')}: "
+                f"${price:,.2f} -> ${new_price:,.2f} "
+                f"(ref=${ref:,.2f}, {direction} by ~{divisor}x)"
+            )
+            txn["price_per_share"] = new_price
+            txn["total_value"] = round(new_total, 2) if new_total is not None else None
+        elif ratio >= 10:
+            # Moderate outlier — log warning but don't modify (possible split)
+            logger.warning(
+                f"Price sanity warning [{txn.get('ticker', '?')}]: "
+                f"{txn.get('insider_name', '?')} on {txn.get('transaction_date')}: "
+                f"${price:,.2f} is {ratio:.1f}x {direction} vs ref ${ref:,.2f} "
+                f"(not auto-corrected — possible stock split)"
+            )
 
 
 def _extract_title(relationship) -> str:

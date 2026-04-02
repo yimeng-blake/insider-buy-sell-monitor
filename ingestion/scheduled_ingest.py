@@ -52,6 +52,7 @@ def ingest_all_tickers():
             filings = edgar.fetch_form4_filings(cik, after_date=last_date)
             logger.info(f"[{ticker}] Found {len(filings)} new filings")
 
+            ref_price = sf.get_recent_median_price(ticker)
             total_inserted = 0
             insiders_seen = {}
             for i, filing in enumerate(filings):
@@ -66,6 +67,7 @@ def ingest_all_tickers():
                     ticker=ticker,
                     primary_doc=filing.get("primary_doc"),
                 )
+                edgar.sanitize_transactions(transactions, ref_price)
                 inserted = sf.insert_transactions(transactions)
                 total_inserted += inserted
 

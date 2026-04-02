@@ -59,6 +59,7 @@ def ingest_ticker(ticker: str):
                 message="No new filings found.",
             )
 
+        ref_price = sf.get_recent_median_price(ticker)
         total_inserted = 0
         insiders_seen = {}  # insider_cik -> (name, title) for batch upsert
 
@@ -75,6 +76,7 @@ def ingest_ticker(ticker: str):
                 ticker=ticker,
                 primary_doc=filing.get("primary_doc"),
             )
+            edgar.sanitize_transactions(transactions, ref_price)
             inserted = sf.insert_transactions(transactions)
             total_inserted += inserted
 

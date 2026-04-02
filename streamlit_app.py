@@ -128,6 +128,7 @@ if page == "Watchlist":
                         last_date = sf.get_last_ingestion_date(ingest_ticker)
                         filings = edgar.fetch_form4_filings(cik, after_date=last_date)
 
+                        ref_price = sf.get_recent_median_price(ingest_ticker)
                         total_inserted = 0
                         insiders_seen = {}
                         for filing in filings:
@@ -138,6 +139,7 @@ if page == "Watchlist":
                                 ticker=ingest_ticker,
                                 primary_doc=filing.get("primary_doc"),
                             )
+                            edgar.sanitize_transactions(transactions, ref_price)
                             total_inserted += sf.insert_transactions(transactions)
                             for txn in transactions:
                                 insiders_seen[txn["insider_cik"]] = (
