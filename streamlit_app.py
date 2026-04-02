@@ -242,6 +242,39 @@ elif page == "Dashboard":
                     else:
                         df_filtered = df.copy()
 
+                    # Aggregate multi-fill broker executions into single rows.
+                    # Large insider sales are often split across price points
+                    # in the SEC filing; consolidate per event for clarity.
+                    group_cols = ["ACCESSION_NUMBER", "INSIDER_NAME", "INSIDER_TITLE",
+                                  "TRANSACTION_DATE", "TRANSACTION_CODE"]
+                    if all(c in df_filtered.columns for c in group_cols):
+                        agg_dict = {}
+                        if "SHARES" in df_filtered.columns:
+                            agg_dict["SHARES"] = "sum"
+                        if "TOTAL_VALUE" in df_filtered.columns:
+                            agg_dict["TOTAL_VALUE"] = "sum"
+                        if "SHARES_OWNED_AFTER" in df_filtered.columns:
+                            agg_dict["SHARES_OWNED_AFTER"] = "last"
+                        if "PRICE_PER_SHARE" in df_filtered.columns:
+                            agg_dict["PRICE_PER_SHARE"] = "first"  # placeholder
+
+                        if agg_dict:
+                            df_agg = (
+                                df_filtered
+                                .sort_values("PRICE_PER_SHARE", ascending=False)
+                                .groupby(group_cols, as_index=False, sort=False)
+                                .agg(agg_dict)
+                            )
+                            # Compute VWAP: total_value / total_shares
+                            if "TOTAL_VALUE" in df_agg.columns and "SHARES" in df_agg.columns:
+                                mask = df_agg["SHARES"] > 0
+                                df_agg.loc[mask, "PRICE_PER_SHARE"] = (
+                                    df_agg.loc[mask, "TOTAL_VALUE"] / df_agg.loc[mask, "SHARES"]
+                                )
+                            # Re-sort by date descending
+                            df_agg = df_agg.sort_values("TRANSACTION_DATE", ascending=False)
+                            df_filtered = df_agg
+
                     display_cols = [
                         "TRANSACTION_DATE", "INSIDER_NAME", "INSIDER_TITLE",
                         "TRANSACTION_CODE", "SHARES", "PRICE_PER_SHARE",
