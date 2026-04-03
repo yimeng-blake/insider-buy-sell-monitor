@@ -499,6 +499,9 @@ def sanitize_transactions(
     Prices off by >=50x are auto-corrected by the nearest power of 10.
     Prices off by 10x-50x are logged as warnings but not modified (could be splits).
 
+    When no reference is available (initial ingestion with small batches), applies
+    a hard-ceiling check to catch prices that are likely missing a decimal point.
+
     Mutates the transaction dicts in place.
     """
     # Exercise (M) and Conversion (C) use strike/conversion prices that are
@@ -513,13 +516,28 @@ def sanitize_transactions(
         and txn.get("transaction_code") not in SKIP_CODES
     ]
 
-    # Determine the reference price
+    # Determine the reference price:
+    # 1. Use caller-provided reference (historical median from DB)
+    # 2. Fall back to batch median if we have at least 3 prices, or 2 prices
+    #    that are reasonably close (within 5x of each other — otherwise the
+    #    median of 2 divergent values is meaningless and could "correct" the
+    #    good price instead of the bad one).
     ref = reference_price
     if ref is None and len(batch_prices) >= 3:
         ref = statistics.median(batch_prices)
+    elif ref is None and len(batch_prices) == 2:
+        lo, hi = sorted(batch_prices)
+        if lo > 0 and hi / lo <= 5:
+            ref = statistics.median(batch_prices)
 
-    if ref is None or ref <= 0:
-        return  # Not enough data to validate
+    if ref is not None and ref > 0:
+        pass  # Will use ref-based checking below
+    else:
+        # No reliable reference available (initial ingestion with too few or
+        # too divergent batch prices). Apply hard-ceiling heuristic to catch
+        # prices that are obviously decimal-point errors.
+        _hard_ceiling_check(transactions, SKIP_CODES)
+        return
 
     for txn in transactions:
         price = txn.get("price_per_share")
@@ -563,6 +581,58 @@ def sanitize_transactions(
                 f"{txn.get('insider_name', '?')} on {txn.get('transaction_date')}: "
                 f"${price:,.2f} is {ratio:.1f}x {direction} vs ref ${ref:,.2f} "
                 f"(not auto-corrected — possible stock split)"
+            )
+
+
+def _hard_ceiling_check(transactions: list[dict], skip_codes: set) -> None:
+    """Last-resort sanity check when no reference price is available.
+
+    Catches prices that are almost certainly decimal-point errors by checking
+    if dividing by a power of 10 yields a price in a normal range ($1-$500).
+    For example, $4015 is likely $40.15 (off by 100x).
+
+    Only triggers for prices above $500/share since most insider-filing
+    stocks trade well below this. Stocks like BRK.A don't typically appear
+    in Form 4 filings at full share prices.
+    """
+    CEILING = 500
+    PLAUSIBLE_RANGE = (1, 500)  # corrected price must land in this range
+
+    for txn in transactions:
+        price = txn.get("price_per_share")
+        if not price or price <= 0:
+            continue
+        if txn.get("transaction_code") in skip_codes:
+            continue
+        if price <= CEILING:
+            continue
+
+        # Try dividing by powers of 10 to find a plausible price
+        corrected = False
+        for power in (2, 3, 1):  # 100x, 1000x, 10x — most common errors first
+            candidate = price / (10 ** power)
+            if PLAUSIBLE_RANGE[0] <= candidate <= PLAUSIBLE_RANGE[1]:
+                new_price = round(candidate, 4)
+                new_total = (
+                    round(txn["shares"] * new_price, 2) if txn.get("shares") else None
+                )
+                logger.warning(
+                    f"Price ceiling fix [{txn.get('ticker', '?')}]: "
+                    f"{txn.get('insider_name', '?')} on {txn.get('transaction_date')}: "
+                    f"${price:,.2f} -> ${new_price:,.2f} "
+                    f"(no reference available, price exceeded ${CEILING:,} ceiling, "
+                    f"corrected by {10 ** power}x)"
+                )
+                txn["price_per_share"] = new_price
+                txn["total_value"] = new_total
+                corrected = True
+                break
+        if not corrected:
+            logger.warning(
+                f"Price ceiling warning [{txn.get('ticker', '?')}]: "
+                f"{txn.get('insider_name', '?')} on {txn.get('transaction_date')}: "
+                f"${price:,.2f} exceeds ${CEILING:,} ceiling but no obvious "
+                f"power-of-10 correction found — leaving as-is"
             )
 
 
