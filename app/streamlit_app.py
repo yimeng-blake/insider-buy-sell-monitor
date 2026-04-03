@@ -1,56 +1,14 @@
 """Streamlit frontend for Insider Buy/Sell Monitor.
 
-Communicates with the FastAPI backend for all data operations.
+Queries Snowflake directly via the service layer (works on Streamlit Cloud
+and locally without requiring a FastAPI backend).
 """
 
-import requests
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 
-API_BASE = "http://localhost:8000"
-
-
-def api_get(path: str, params: dict = None):
-    """Make a GET request to the FastAPI backend."""
-    try:
-        resp = requests.get(f"{API_BASE}{path}", params=params, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.exceptions.ConnectionError:
-        st.error("Cannot connect to API. Make sure the FastAPI server is running on port 8000.")
-        return None
-    except requests.exceptions.HTTPError as e:
-        st.error(f"API error: {e.response.text}")
-        return None
-
-
-def api_post(path: str, json: dict = None):
-    """Make a POST request to the FastAPI backend."""
-    try:
-        resp = requests.post(f"{API_BASE}{path}", json=json, timeout=120)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.exceptions.ConnectionError:
-        st.error("Cannot connect to API. Make sure the FastAPI server is running on port 8000.")
-        return None
-    except requests.exceptions.HTTPError as e:
-        st.error(f"API error: {e.response.text}")
-        return None
-
-
-def api_delete(path: str):
-    """Make a DELETE request to the FastAPI backend."""
-    try:
-        resp = requests.delete(f"{API_BASE}{path}", timeout=30)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.exceptions.ConnectionError:
-        st.error("Cannot connect to API. Make sure the FastAPI server is running on port 8000.")
-        return None
-    except requests.exceptions.HTTPError as e:
-        st.error(f"API error: {e.response.text}")
-        return None
+from api.services import snowflake as sf
+from api.services.edgar import resolve_ticker_to_cik
 
 
 # --- Page configuration ---
@@ -78,7 +36,7 @@ if page == "Watchlist":
 
     # --- Today's Insider Activity Brief ---
     st.subheader("Today's Insider Activity")
-    today_txns = api_get("/transactions", {"days": 0, "limit": 500})
+    today_txns = sf.get_transactions(days=0, limit=500)
     if today_txns:
         tdf = pd.DataFrame(today_txns)
         if not tdf.empty:
@@ -119,20 +77,21 @@ if page == "Watchlist":
         st.info("No insider filings today.")
     st.divider()
 
+
     col1, col2 = st.columns([2, 1])
 
     with col1:
         st.subheader("Active Watchlist")
-        watchlist = api_get("/watchlist")
+        watchlist = sf.get_watchlist(active_only=True)
         if watchlist:
             df = pd.DataFrame(watchlist)
             if not df.empty:
-                display_cols = ["ticker", "company_name", "cik", "exchange", "added_at"]
+                display_cols = ["TICKER", "COMPANY_NAME", "CIK", "EXCHANGE", "ADDED_AT"]
                 available = [c for c in display_cols if c in df.columns]
                 df_display = df[available].copy()
                 col_labels = {
-                    "ticker": "Ticker", "company_name": "Company",
-                    "cik": "CIK", "exchange": "Exchange", "added_at": "Added",
+                    "TICKER": "Ticker", "COMPANY_NAME": "Company",
+                    "CIK": "CIK", "EXCHANGE": "Exchange", "ADDED_AT": "Added",
                 }
                 df_display.rename(columns=col_labels, inplace=True)
                 if "Added" in df_display.columns:
@@ -141,7 +100,7 @@ if page == "Watchlist":
             else:
                 st.info("Watchlist is empty. Add a ticker to get started.")
         else:
-            st.info("Watchlist is empty or API unavailable.")
+            st.info("Watchlist is empty. Add a ticker to get started.")
 
     with col2:
         st.subheader("Add Ticker")
@@ -152,38 +111,56 @@ if page == "Watchlist":
             submitted = st.form_submit_button("Add to Watchlist")
             if submitted and ticker_input:
                 with st.spinner(f"Resolving {ticker_input} via SEC EDGAR..."):
-                    result = api_post("/watchlist", json={"ticker": ticker_input})
-                if result:
-                    st.success(f"Added {ticker_input}")
-                    st.rerun()
+                    try:
+                        company = resolve_ticker_to_cik(ticker_input)
+                        result = sf.add_to_watchlist(
+                            ticker=ticker_input,
+                            company_name=company["name"],
+                            cik=company["cik"],
+                            exchange=company.get("exchange"),
+                            sic_code=company.get("sic"),
+                        )
+                        if result:
+                            st.success(f"Added {ticker_input}")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to add {ticker_input}: {e}")
 
         st.subheader("Remove Ticker")
         if watchlist:
-            tickers = [item.get("ticker", "") for item in watchlist]
+            tickers = [item.get("TICKER", "") for item in watchlist]
             if tickers:
                 remove_ticker = st.selectbox("Select ticker to remove", tickers)
                 if st.button("Remove"):
-                    result = api_delete(f"/watchlist/{remove_ticker}")
-                    if result:
-                        st.success(f"Removed {remove_ticker}")
-                        st.rerun()
+                    sf.remove_from_watchlist(remove_ticker)
+                    st.success(f"Removed {remove_ticker}")
+                    st.rerun()
 
     st.divider()
     st.subheader("Ingest Data")
     if watchlist:
         ingest_ticker = st.selectbox(
             "Select ticker to ingest",
-            [item.get("ticker", "") for item in watchlist],
+            [item.get("TICKER", "") for item in watchlist],
             key="ingest_select",
         )
         if st.button("Ingest Now"):
-            with st.spinner(f"Pulling Form 4 filings for {ingest_ticker}..."):
-                result = api_post(f"/ingest/{ingest_ticker}")
-            if result:
+            try:
+                import requests as _req
+                with st.spinner(f"Pulling Form 4 filings for {ingest_ticker}..."):
+                    resp = _req.post(f"http://localhost:8000/ingest/{ingest_ticker}", timeout=120)
+                    resp.raise_for_status()
+                    result = resp.json()
                 st.success(
                     f"Ingested {result.get('filings_processed', 0)} filings, "
                     f"{result.get('transactions_inserted', 0)} transactions, "
                     f"{result.get('alerts_generated', 0)} alerts generated."
+                )
+            except Exception:
+                st.warning(
+                    "Ingestion requires the local FastAPI server (port 8000). "
+                    "Run `uvicorn api.main:app` locally, or use the CLI: "
+                    "`python -m ingestion.scheduled_ingest`."
                 )
 
 
@@ -194,11 +171,11 @@ if page == "Watchlist":
 elif page == "Dashboard":
     st.header("Insider Trading Dashboard")
 
-    watchlist = api_get("/watchlist")
+    watchlist = sf.get_watchlist(active_only=True)
     if not watchlist:
         st.info("Add tickers to your watchlist first.")
     else:
-        tickers = [item.get("ticker", "") for item in watchlist]
+        tickers = [item.get("TICKER", "") for item in watchlist]
 
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -208,7 +185,7 @@ elif page == "Dashboard":
 
         if selected_ticker:
             # Summary metrics
-            summary = api_get(f"/transactions/{selected_ticker}/summary", {"days": days})
+            summary = sf.get_transaction_summary(selected_ticker, days=days)
             if summary:
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Total Buys", summary.get("total_buys", 0))
@@ -223,7 +200,7 @@ elif page == "Dashboard":
 
             # Transaction table
             st.subheader("Recent Transactions")
-            txns = api_get("/transactions", {"ticker": selected_ticker, "days": days, "limit": 500})
+            txns = sf.get_transactions(ticker=selected_ticker, days=days, limit=500)
             if txns:
                 df = pd.DataFrame(txns)
                 if not df.empty:
@@ -310,19 +287,16 @@ elif page == "Alerts":
     with col1:
         show_acknowledged = st.checkbox("Show acknowledged alerts", value=False)
     with col2:
-        watchlist = api_get("/watchlist")
+        watchlist = sf.get_watchlist(active_only=True)
         filter_ticker = st.selectbox(
             "Filter by ticker",
-            ["All"] + [item.get("ticker", "") for item in (watchlist or [])],
+            ["All"] + [item.get("TICKER", "") for item in (watchlist or [])],
         )
 
-    params = {}
-    if filter_ticker != "All":
-        params["ticker"] = filter_ticker
-    if not show_acknowledged:
-        params["acknowledged"] = False
+    alert_ticker = filter_ticker if filter_ticker != "All" else None
+    alert_ack = None if show_acknowledged else False
 
-    alerts = api_get("/alerts", params)
+    alerts = sf.get_alerts(ticker=alert_ticker, acknowledged=alert_ack, limit=100)
 
     if alerts:
         for alert in alerts:
@@ -339,7 +313,7 @@ elif page == "Alerts":
 
                 if not alert.get("ACKNOWLEDGED"):
                     if st.button("Acknowledge", key=alert.get("ALERT_ID")):
-                        api_post(f"/alerts/{alert['ALERT_ID']}/acknowledge")
+                        sf.acknowledge_alert(alert["ALERT_ID"])
                         st.rerun()
                 else:
                     st.caption("Acknowledged")
@@ -354,7 +328,7 @@ elif page == "Alerts":
 elif page == "Analytics":
     st.header("Cross-Company Analytics")
 
-    watchlist = api_get("/watchlist")
+    watchlist = sf.get_watchlist(active_only=True)
     if not watchlist:
         st.info("Add tickers to your watchlist to see analytics.")
     else:
@@ -363,8 +337,8 @@ elif page == "Analytics":
         # Collect summaries for all tickers
         summaries = []
         for item in watchlist:
-            ticker = item.get("ticker", "")
-            summary = api_get(f"/transactions/{ticker}/summary", {"days": days})
+            ticker = item.get("TICKER", "")
+            summary = sf.get_transaction_summary(ticker, days=days)
             if summary:
                 summaries.append(summary)
 
