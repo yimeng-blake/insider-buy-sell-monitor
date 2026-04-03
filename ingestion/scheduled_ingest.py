@@ -11,7 +11,7 @@ Usage:
 import argparse
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -45,11 +45,16 @@ def ingest_all_tickers():
 
         try:
             last_date = sf.get_last_ingestion_date(ticker)
-            logger.info(
-                f"[{ticker}] Fetching filings after {last_date or 'beginning'}"
-            )
 
-            filings = edgar.fetch_form4_filings(cik, after_date=last_date)
+            if last_date is None:
+                from api.config import settings
+                after_date = date.today() - timedelta(days=settings.INITIAL_INGEST_LOOKBACK_DAYS)
+                logger.info(f"[{ticker}] Initial ingestion, lookback to {after_date}")
+            else:
+                after_date = last_date
+                logger.info(f"[{ticker}] Incremental ingestion since {after_date}")
+
+            filings = edgar.fetch_form4_filings(cik, after_date=after_date)
             logger.info(f"[{ticker}] Found {len(filings)} new filings")
 
             ref_price = sf.get_recent_median_price(ticker)

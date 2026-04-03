@@ -3,13 +3,14 @@
 Triggers Form 4 data pull from SEC EDGAR for a given ticker.
 
 Two modes:
-  - Initial ingestion (no prior data): fetches ALL historical Form 4 filings,
-    including paginated older filings. This is the heavy one-time cost.
+  - Initial ingestion (no prior data): fetches filings from the last
+    INITIAL_INGEST_LOOKBACK_DAYS (default 365 days).
   - Incremental ingestion: only fetches filings newer than the last ingestion.
     Fast because most data is already in Snowflake.
 """
 
 import logging
+from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException
 
@@ -42,11 +43,14 @@ def ingest_ticker(ticker: str):
         is_initial = last_date is None
 
         if is_initial:
-            logger.info(f"Initial full ingestion for {ticker} (CIK {cik})")
+            from api.config import settings
+            after_date = date.today() - timedelta(days=settings.INITIAL_INGEST_LOOKBACK_DAYS)
+            logger.info(f"Initial ingestion for {ticker} (CIK {cik}), lookback to {after_date}")
         else:
-            logger.info(f"Incremental ingestion for {ticker} since {last_date}")
+            after_date = last_date
+            logger.info(f"Incremental ingestion for {ticker} since {after_date}")
 
-        filings = edgar.fetch_form4_filings(cik, after_date=last_date)
+        filings = edgar.fetch_form4_filings(cik, after_date=after_date)
 
         if not filings:
             sf.complete_ingestion_log(run_id, 0, 0)

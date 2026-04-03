@@ -22,6 +22,10 @@ class Settings:
     SEC_EDGAR_MAX_RETRIES: int = 3  # retry count for failed EDGAR requests
     SEC_EDGAR_REQUEST_TIMEOUT: int = 30  # seconds per request
 
+    INITIAL_INGEST_LOOKBACK_DAYS: int = int(
+        os.getenv("INITIAL_INGEST_LOOKBACK_DAYS", "365")
+    )
+
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
 

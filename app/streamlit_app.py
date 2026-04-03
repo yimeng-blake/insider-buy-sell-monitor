@@ -76,6 +76,49 @@ page = st.sidebar.radio(
 if page == "Watchlist":
     st.header("Watchlist Management")
 
+    # --- Today's Insider Activity Brief ---
+    st.subheader("Today's Insider Activity")
+    today_txns = api_get("/transactions", {"days": 0, "limit": 500})
+    if today_txns:
+        tdf = pd.DataFrame(today_txns)
+        if not tdf.empty:
+            buys = tdf[tdf["TRANSACTION_CODE"] == "P"]
+            sells = tdf[tdf["TRANSACTION_CODE"] == "S"]
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Filings Today", len(tdf))
+            m2.metric("Total Buy Value", f"${buys['TOTAL_VALUE'].sum():,.0f}" if not buys.empty else "$0")
+            m3.metric("Total Sell Value", f"${sells['TOTAL_VALUE'].sum():,.0f}" if not sells.empty else "$0")
+
+            code_map = {
+                "P": "Purchase", "S": "Sale", "A": "Grant",
+                "D": "Disposition", "M": "Exercise", "G": "Gift",
+                "F": "Tax Withholding", "C": "Conversion",
+            }
+            display_cols = [
+                "TICKER", "INSIDER_NAME", "INSIDER_TITLE",
+                "TRANSACTION_CODE", "SHARES", "PRICE_PER_SHARE",
+                "TOTAL_VALUE", "TRANSACTION_DATE",
+            ]
+            available = [c for c in display_cols if c in tdf.columns]
+            brief_df = tdf[available].copy()
+            if "TRANSACTION_CODE" in brief_df.columns:
+                brief_df["TRANSACTION_CODE"] = brief_df["TRANSACTION_CODE"].map(
+                    lambda x: code_map.get(x, x)
+                )
+            brief_df.rename(columns={
+                "TICKER": "Ticker", "INSIDER_NAME": "Insider",
+                "INSIDER_TITLE": "Title", "TRANSACTION_CODE": "Type",
+                "SHARES": "Shares", "PRICE_PER_SHARE": "Price",
+                "TOTAL_VALUE": "Value", "TRANSACTION_DATE": "Date",
+            }, inplace=True)
+            brief_df.fillna("-", inplace=True)
+            st.dataframe(brief_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No insider filings today.")
+    else:
+        st.info("No insider filings today.")
+    st.divider()
+
     col1, col2 = st.columns([2, 1])
 
     with col1:
