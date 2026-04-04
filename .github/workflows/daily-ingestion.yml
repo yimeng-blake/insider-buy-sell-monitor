@@ -1,0 +1,38 @@
+name: Daily Insider-Trading Ingestion
+
+on:
+  schedule:
+    # 1:03 PM UTC = 6:03 AM Pacific
+    - cron: '3 13 * * *'
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+      SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+      SNOWFLAKE_WAREHOUSE: COMPUTE_WH
+      SNOWFLAKE_DATABASE: INSIDER_MONITOR
+      SNOWFLAKE_SCHEMA: PUBLIC
+      SNOWFLAKE_ROLE: INSIDER_MONITOR_ROLE
+      SEC_EDGAR_USER_AGENT: ${{ secrets.SEC_EDGAR_USER_AGENT }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ingestion
+        run: python -m ingestion.scheduled_ingest

@@ -13,8 +13,6 @@ import logging
 import sys
 from datetime import datetime, timezone, date, timedelta
 
-from apscheduler.schedulers.blocking import BlockingScheduler
-
 # Add project root to path
 sys.path.insert(0, ".")
 
@@ -115,6 +113,8 @@ def main():
     args = parser.parse_args()
 
     if args.daemon:
+        from apscheduler.schedulers.blocking import BlockingScheduler
+
         logger.info(f"Starting daemon mode, will run daily at {args.hour}:00 UTC")
         scheduler = BlockingScheduler()
         scheduler.add_job(ingest_all_tickers, "cron", hour=args.hour, minute=0)
