@@ -60,6 +60,8 @@ if st.sidebar.button("Add to Watchlist", use_container_width=True):
                     exchange=company.get("exchange"),
                     sic_code=company.get("sic"),
                 )
+                sf.enqueue_ingestions(new_ticker, requested_by="insider_monitor")
+                sf.trigger_cross_app_ingestion(new_ticker, source_monitor="insider_monitor")
                 st.success(f"Added {company['name']} ({new_ticker})")
                 st.rerun()
 
