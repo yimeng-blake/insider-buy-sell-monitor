@@ -122,25 +122,31 @@ def _execute_no_fetch(sql: str, params=None):
 
 
 def get_watchlist(active_only: bool = True) -> list[dict]:
-    """Get all watchlist items."""
+    """Get all watchlist items from the centralised WATCHLIST_HUB."""
     if active_only:
         return _execute(
-            "SELECT * FROM WATCHLIST WHERE ACTIVE = TRUE ORDER BY ADDED_AT"
+            "SELECT * FROM WATCHLIST_HUB.PUBLIC.COMPANIES WHERE ACTIVE = TRUE ORDER BY ADDED_AT"
         )
-    return _execute("SELECT * FROM WATCHLIST ORDER BY ADDED_AT")
+    return _execute("SELECT * FROM WATCHLIST_HUB.PUBLIC.COMPANIES ORDER BY ADDED_AT")
 
 
 def add_to_watchlist(
     ticker: str, company_name: str, cik: str,
     exchange: Optional[str] = None, sic_code: Optional[str] = None,
 ) -> dict:
-    """Add a company to the watchlist. Returns the inserted row."""
+    """Add a company to the centralised watchlist. Returns the inserted row."""
     now = datetime.now(timezone.utc)
     _execute_no_fetch(
-        "INSERT INTO WATCHLIST (TICKER, COMPANY_NAME, CIK, EXCHANGE, SIC_CODE, ADDED_AT, ACTIVE) "
-        "SELECT %s, %s, %s, %s, %s, %s, %s "
-        "WHERE NOT EXISTS (SELECT 1 FROM WATCHLIST WHERE TICKER = %s)",
-        (ticker.upper(), company_name, cik, exchange, sic_code, now, True, ticker.upper()),
+        "MERGE INTO WATCHLIST_HUB.PUBLIC.COMPANIES tgt "
+        "USING (SELECT %s AS TICKER) src ON tgt.TICKER = src.TICKER "
+        "WHEN MATCHED AND tgt.ACTIVE = FALSE THEN UPDATE SET "
+        "  ACTIVE = TRUE, COMPANY_NAME = %s, CIK = %s, EXCHANGE = %s, "
+        "  SIC_CODE = %s, ADDED_AT = %s, ADDED_BY = 'insider_monitor' "
+        "WHEN NOT MATCHED THEN INSERT "
+        "  (TICKER, COMPANY_NAME, CIK, EXCHANGE, SIC_CODE, ADDED_AT, ADDED_BY) "
+        "  VALUES (%s, %s, %s, %s, %s, %s, 'insider_monitor')",
+        (ticker.upper(), company_name, cik, exchange, sic_code, now,
+         ticker.upper(), company_name, cik, exchange, sic_code, now),
     )
     return {
         "ticker": ticker.upper(),
@@ -154,9 +160,9 @@ def add_to_watchlist(
 
 
 def remove_from_watchlist(ticker: str) -> bool:
-    """Soft-delete a company from the watchlist."""
+    """Soft-delete a company from the centralised watchlist."""
     _execute_no_fetch(
-        "UPDATE WATCHLIST SET ACTIVE = FALSE WHERE TICKER = %s",
+        "UPDATE WATCHLIST_HUB.PUBLIC.COMPANIES SET ACTIVE = FALSE WHERE TICKER = %s",
         (ticker.upper(),),
     )
     return True
@@ -165,7 +171,7 @@ def remove_from_watchlist(ticker: str) -> bool:
 def get_watchlist_item(ticker: str) -> Optional[dict]:
     """Get a single watchlist item by ticker."""
     rows = _execute(
-        "SELECT * FROM WATCHLIST WHERE TICKER = %s", (ticker.upper(),)
+        "SELECT * FROM WATCHLIST_HUB.PUBLIC.COMPANIES WHERE TICKER = %s", (ticker.upper(),)
     )
     if rows:
         return rows[0]
