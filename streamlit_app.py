@@ -32,211 +32,64 @@ st.title("Insider Buy/Sell Monitor")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Watchlist", "Dashboard", "Alerts", "Analytics"],
+    ["Search", "Watchlist Overview", "Alerts", "Analytics"],
 )
 
+# --- Sidebar: Manage Watchlist ---
+st.sidebar.divider()
+st.sidebar.subheader("Manage Watchlist")
 
-# ============================================================
-# WATCHLIST PAGE
-# ============================================================
+new_ticker = st.sidebar.text_input(
+    "Ticker symbol", placeholder="e.g. AAPL", key="add_ticker_input"
+).strip().upper()
 
-if page == "Watchlist":
-    st.header("Watchlist Management")
-
-    # --- Today's Insider Activity Brief ---
-    st.subheader("Today's Insider Activity")
-    try:
-        today_txns = sf.get_transactions(days=0, limit=500)
-    except Exception:
-        today_txns = []
-    if today_txns:
-        tdf = pd.DataFrame(today_txns)
-        if not tdf.empty:
-            buys = tdf[tdf["TRANSACTION_CODE"] == "P"]
-            sells = tdf[tdf["TRANSACTION_CODE"] == "S"]
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Filings Today", len(tdf))
-            m2.metric("Total Buy Value", f"${buys['TOTAL_VALUE'].sum():,.0f}" if not buys.empty else "$0")
-            m3.metric("Total Sell Value", f"${sells['TOTAL_VALUE'].sum():,.0f}" if not sells.empty else "$0")
-
-            code_map = {
-                "P": "Purchase", "S": "Sale", "A": "Grant",
-                "D": "Disposition", "M": "Exercise", "G": "Gift",
-                "F": "Tax Withholding", "C": "Conversion",
-            }
-            display_cols = [
-                "TICKER", "INSIDER_NAME", "INSIDER_TITLE",
-                "TRANSACTION_CODE", "SHARES", "PRICE_PER_SHARE",
-                "TOTAL_VALUE", "TRANSACTION_DATE",
-            ]
-            available = [c for c in display_cols if c in tdf.columns]
-            brief_df = tdf[available].copy()
-            if "TRANSACTION_CODE" in brief_df.columns:
-                brief_df["TRANSACTION_CODE"] = brief_df["TRANSACTION_CODE"].map(
-                    lambda x: code_map.get(x, x)
-                )
-            brief_df.rename(columns={
-                "TICKER": "Ticker", "INSIDER_NAME": "Insider",
-                "INSIDER_TITLE": "Title", "TRANSACTION_CODE": "Type",
-                "SHARES": "Shares", "PRICE_PER_SHARE": "Price",
-                "TOTAL_VALUE": "Value", "TRANSACTION_DATE": "Date",
-            }, inplace=True)
-            brief_df.fillna("-", inplace=True)
-            st.dataframe(brief_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No insider filings today.")
+if st.sidebar.button("Add to Watchlist", use_container_width=True):
+    if not new_ticker:
+        st.sidebar.error("Enter a ticker symbol.")
     else:
-        st.info("No insider filings today.")
-    st.divider()
-
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.subheader("Active Watchlist")
-        try:
-            watchlist = sf.get_watchlist(active_only=True)
-        except Exception as e:
-            st.error(f"Snowflake error: {e}")
-            watchlist = []
-
-        if watchlist:
-            df = pd.DataFrame(watchlist)
-            if not df.empty:
-                display_cols = ["TICKER", "COMPANY_NAME", "CIK", "EXCHANGE", "ADDED_AT"]
-                available = [c for c in display_cols if c in df.columns]
-                df_display = df[available].copy()
-                col_labels = {
-                    "TICKER": "Ticker", "COMPANY_NAME": "Company",
-                    "CIK": "CIK", "EXCHANGE": "Exchange", "ADDED_AT": "Added",
-                }
-                df_display.rename(columns=col_labels, inplace=True)
-                if "Added" in df_display.columns:
-                    df_display["Added"] = pd.to_datetime(df_display["Added"], utc=True).dt.strftime("%Y-%m-%d")
-                st.dataframe(df_display, width="stretch", hide_index=True)
+        with st.sidebar:
+            with st.spinner(f"Resolving {new_ticker} via SEC EDGAR..."):
+                company = edgar.resolve_ticker_to_cik(new_ticker)
+            if not company:
+                st.error(f"Could not resolve '{new_ticker}' via SEC EDGAR.")
             else:
-                st.info("Watchlist is empty. Add a ticker to get started.")
-        else:
-            st.info("Watchlist is empty or Snowflake unavailable.")
+                sf.add_to_watchlist(
+                    ticker=new_ticker,
+                    company_name=company["name"],
+                    cik=company["cik"],
+                    exchange=company.get("exchange"),
+                    sic_code=company.get("sic"),
+                )
+                st.success(f"Added {company['name']} ({new_ticker})")
+                st.rerun()
 
-    with col2:
-        st.subheader("Add Ticker")
-        with st.form("add_ticker"):
-            ticker_input = st.text_input(
-                "Ticker Symbol", placeholder="AAPL", max_chars=10
-            ).upper()
-            submitted = st.form_submit_button("Add to Watchlist")
-            if submitted and ticker_input:
-                existing = sf.get_watchlist_item(ticker_input)
-                if existing and existing.get("ACTIVE"):
-                    st.warning(f"{ticker_input} is already on the watchlist.")
-                else:
-                    with st.spinner(f"Resolving {ticker_input} via SEC EDGAR..."):
-                        company = edgar.resolve_ticker_to_cik(ticker_input)
-                    if not company:
-                        st.error(f"Could not resolve ticker '{ticker_input}' via SEC EDGAR.")
-                    else:
-                        sf.add_to_watchlist(
-                            ticker=ticker_input,
-                            company_name=company["name"],
-                            cik=company["cik"],
-                            exchange=company.get("exchange"),
-                            sic_code=company.get("sic"),
-                        )
-                        st.success(f"Added {ticker_input}")
-                        st.rerun()
+# Display current watchlist with remove buttons
+current_watchlist = sf.get_watchlist(active_only=True)
+if current_watchlist:
+    st.sidebar.caption(f"{len(current_watchlist)} company(ies) on your watchlist")
+    for entry in current_watchlist:
+        col_name, col_btn = st.sidebar.columns([3, 1])
+        col_name.markdown(f"**{entry.get('TICKER', '')}**")
+        if col_btn.button("X", key=f"rm_{entry.get('TICKER', '')}", help=f"Remove {entry.get('TICKER', '')}"):
+            sf.remove_from_watchlist(entry["TICKER"])
+            st.rerun()
+else:
+    st.sidebar.caption("Your watchlist is empty. Add a ticker above.")
 
-        st.subheader("Remove Ticker")
-        if watchlist:
-            tickers = [item.get("TICKER", "") for item in watchlist]
-            if tickers:
-                remove_ticker = st.selectbox("Select ticker to remove", tickers)
-                if st.button("Remove"):
-                    sf.remove_from_watchlist(remove_ticker)
-                    st.success(f"Removed {remove_ticker}")
-                    st.rerun()
-
-    st.divider()
-    st.subheader("Ingest Data")
-    if watchlist:
-        ingest_ticker = st.selectbox(
-            "Select ticker to ingest",
-            [item.get("TICKER", "") for item in watchlist],
-            key="ingest_select",
-        )
-        if st.button("Ingest Now"):
-            with st.spinner(f"Pulling Form 4 filings for {ingest_ticker}..."):
-                watchlist_item = sf.get_watchlist_item(ingest_ticker)
-                if not watchlist_item:
-                    st.error(f"{ingest_ticker} not found in watchlist.")
-                else:
-                    cik = watchlist_item["CIK"]
-                    run_id = sf.create_ingestion_log(ingest_ticker)
-                    try:
-                        last_date = sf.get_last_ingestion_date(ingest_ticker)
-                        filings = edgar.fetch_form4_filings(cik, after_date=last_date)
-
-                        ref_price = sf.get_recent_median_price(ingest_ticker)
-                        total_inserted = 0
-                        insiders_seen = {}
-                        for filing in filings:
-                            transactions = edgar.parse_form4_xml(
-                                cik=cik,
-                                accession_number=filing["accession_number"],
-                                filing_date=filing["filing_date"],
-                                ticker=ingest_ticker,
-                                primary_doc=filing.get("primary_doc"),
-                            )
-                            edgar.sanitize_transactions(transactions, ref_price)
-                            total_inserted += sf.insert_transactions(transactions)
-                            for txn in transactions:
-                                insiders_seen[txn["insider_cik"]] = (
-                                    txn["insider_name"], txn["insider_title"],
-                                )
-
-                        for insider_cik, (name, title) in insiders_seen.items():
-                            sf.upsert_insider(insider_cik, name, title)
-
-                        alerts_list = anomaly.run_anomaly_detection(ingest_ticker)
-                        alerts_generated = 0
-                        for alert in alerts_list:
-                            sf.insert_alert(**alert)
-                            alerts_generated += 1
-
-                        sf.complete_ingestion_log(run_id, len(filings), total_inserted)
-                        if len(filings) == 0 and total_inserted == 0:
-                            st.info(
-                                f"No new filings found for {ingest_ticker}. "
-                                f"Data is already up to date."
-                                + (f" {alerts_generated} alerts generated from existing data." if alerts_generated else "")
-                            )
-                        else:
-                            st.success(
-                                f"Ingested {len(filings)} filings, "
-                                f"{total_inserted} new transactions."
-                                + (f" {alerts_generated} alerts generated." if alerts_generated else "")
-                            )
-                    except Exception as e:
-                        sf.complete_ingestion_log(run_id, 0, 0, status="FAILED", error=str(e))
-                        st.error(f"Ingestion failed: {e}")
+st.sidebar.divider()
 
 
 # ============================================================
-# DASHBOARD PAGE
+# SEARCH PAGE (formerly Dashboard)
 # ============================================================
 
-elif page == "Dashboard":
-    st.header("Insider Trading Dashboard")
+if page == "Search":
+    st.header("Insider Trading Search")
 
-    try:
-        watchlist = sf.get_watchlist(active_only=True)
-    except Exception as e:
-        st.error(f"Snowflake error: {e}")
-        watchlist = []
-
-    if not watchlist:
+    if not current_watchlist:
         st.info("Add tickers to your watchlist first.")
     else:
-        tickers = [item.get("TICKER", "") for item in watchlist]
+        tickers = [item.get("TICKER", "") for item in current_watchlist]
 
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -511,10 +364,170 @@ elif page == "Dashboard":
                                 .properties(height=400)
                             )
                             st.altair_chart(insider_chart, use_container_width=True)
-                else:
-                    st.info(f"No transactions found for {selected_ticker} in the last {days} days.")
             else:
-                st.info("No transaction data available. Try ingesting data first.")
+                st.info(f"No transactions found for {selected_ticker} in the last {days} days.")
+        else:
+            st.info("No transaction data available. Try ingesting data first.")
+
+
+# ============================================================
+# WATCHLIST OVERVIEW PAGE
+# ============================================================
+
+elif page == "Watchlist Overview":
+    st.header("Watchlist Overview")
+
+    # --- Today's Insider Activity Brief ---
+    st.subheader("Today's Insider Activity")
+    try:
+        today_txns = sf.get_transactions(days=0, limit=500)
+    except Exception:
+        today_txns = []
+    if today_txns:
+        tdf = pd.DataFrame(today_txns)
+        if not tdf.empty:
+            buys = tdf[tdf["TRANSACTION_CODE"] == "P"]
+            sells = tdf[tdf["TRANSACTION_CODE"] == "S"]
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Filings Today", len(tdf))
+            m2.metric("Total Buy Value", f"${buys['TOTAL_VALUE'].sum():,.0f}" if not buys.empty else "$0")
+            m3.metric("Total Sell Value", f"${sells['TOTAL_VALUE'].sum():,.0f}" if not sells.empty else "$0")
+
+            code_map = {
+                "P": "Purchase", "S": "Sale", "A": "Grant",
+                "D": "Disposition", "M": "Exercise", "G": "Gift",
+                "F": "Tax Withholding", "C": "Conversion",
+            }
+            display_cols = [
+                "TICKER", "INSIDER_NAME", "INSIDER_TITLE",
+                "TRANSACTION_CODE", "SHARES", "PRICE_PER_SHARE",
+                "TOTAL_VALUE", "TRANSACTION_DATE",
+            ]
+            available = [c for c in display_cols if c in tdf.columns]
+            brief_df = tdf[available].copy()
+            if "TRANSACTION_CODE" in brief_df.columns:
+                brief_df["TRANSACTION_CODE"] = brief_df["TRANSACTION_CODE"].map(
+                    lambda x: code_map.get(x, x)
+                )
+            brief_df.rename(columns={
+                "TICKER": "Ticker", "INSIDER_NAME": "Insider",
+                "INSIDER_TITLE": "Title", "TRANSACTION_CODE": "Type",
+                "SHARES": "Shares", "PRICE_PER_SHARE": "Price",
+                "TOTAL_VALUE": "Value", "TRANSACTION_DATE": "Date",
+            }, inplace=True)
+            brief_df.fillna("-", inplace=True)
+            st.dataframe(brief_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No insider filings today.")
+    else:
+        st.info("No insider filings today.")
+
+    st.divider()
+
+    # --- Watchlist table with ingestion status ---
+    st.subheader("Watchlist Status")
+
+    if not current_watchlist:
+        st.info("Watchlist is empty. Add a ticker in the sidebar to get started.")
+    else:
+        # Build watchlist table with ingestion status
+        wl_df = pd.DataFrame(current_watchlist)
+        display_cols = ["TICKER", "COMPANY_NAME", "CIK", "EXCHANGE", "ADDED_AT"]
+        available = [c for c in display_cols if c in wl_df.columns]
+        wl_display = wl_df[available].copy()
+
+        # Merge ingestion status
+        try:
+            log_summary = sf.get_ingestion_log_summary()
+        except Exception:
+            log_summary = []
+
+        if log_summary:
+            log_df = pd.DataFrame(log_summary)
+            if "TICKER" in log_df.columns:
+                log_df = log_df[["TICKER", "STATUS", "COMPLETED_AT", "FILINGS_PROCESSED", "TRANSACTIONS_INSERTED"]]
+                wl_display = wl_display.merge(log_df, on="TICKER", how="left")
+
+        col_labels = {
+            "TICKER": "Ticker", "COMPANY_NAME": "Company",
+            "CIK": "CIK", "EXCHANGE": "Exchange", "ADDED_AT": "Added",
+            "STATUS": "Ingestion Status", "COMPLETED_AT": "Last Ingested",
+            "FILINGS_PROCESSED": "Filings", "TRANSACTIONS_INSERTED": "Transactions",
+        }
+        wl_display.rename(columns=col_labels, inplace=True)
+        if "Added" in wl_display.columns:
+            wl_display["Added"] = pd.to_datetime(wl_display["Added"], utc=True).dt.strftime("%Y-%m-%d")
+        if "Last Ingested" in wl_display.columns:
+            wl_display["Last Ingested"] = pd.to_datetime(wl_display["Last Ingested"], utc=True).dt.strftime("%Y-%m-%d %H:%M")
+        wl_display.fillna("-", inplace=True)
+        st.dataframe(wl_display, use_container_width=True, hide_index=True)
+
+    # --- Ingest Data ---
+    st.divider()
+    st.subheader("Ingest Data")
+    if current_watchlist:
+        ingest_ticker = st.selectbox(
+            "Select ticker to ingest",
+            [item.get("TICKER", "") for item in current_watchlist],
+            key="ingest_select",
+        )
+        if st.button("Ingest Now"):
+            with st.spinner(f"Pulling Form 4 filings for {ingest_ticker}..."):
+                watchlist_item = sf.get_watchlist_item(ingest_ticker)
+                if not watchlist_item:
+                    st.error(f"{ingest_ticker} not found in watchlist.")
+                else:
+                    cik = watchlist_item["CIK"]
+                    run_id = sf.create_ingestion_log(ingest_ticker)
+                    try:
+                        last_date = sf.get_last_ingestion_date(ingest_ticker)
+                        filings = edgar.fetch_form4_filings(cik, after_date=last_date)
+
+                        ref_price = sf.get_recent_median_price(ingest_ticker)
+                        total_inserted = 0
+                        insiders_seen = {}
+                        for filing in filings:
+                            transactions = edgar.parse_form4_xml(
+                                cik=cik,
+                                accession_number=filing["accession_number"],
+                                filing_date=filing["filing_date"],
+                                ticker=ingest_ticker,
+                                primary_doc=filing.get("primary_doc"),
+                            )
+                            edgar.sanitize_transactions(transactions, ref_price)
+                            total_inserted += sf.insert_transactions(transactions)
+                            for txn in transactions:
+                                insiders_seen[txn["insider_cik"]] = (
+                                    txn["insider_name"], txn["insider_title"],
+                                )
+
+                        for insider_cik, (name, title) in insiders_seen.items():
+                            sf.upsert_insider(insider_cik, name, title)
+
+                        alerts_list = anomaly.run_anomaly_detection(ingest_ticker)
+                        alerts_generated = 0
+                        for alert in alerts_list:
+                            sf.insert_alert(**alert)
+                            alerts_generated += 1
+
+                        sf.complete_ingestion_log(run_id, len(filings), total_inserted)
+                        if len(filings) == 0 and total_inserted == 0:
+                            st.info(
+                                f"No new filings found for {ingest_ticker}. "
+                                f"Data is already up to date."
+                                + (f" {alerts_generated} alerts generated from existing data." if alerts_generated else "")
+                            )
+                        else:
+                            st.success(
+                                f"Ingested {len(filings)} filings, "
+                                f"{total_inserted} new transactions."
+                                + (f" {alerts_generated} alerts generated." if alerts_generated else "")
+                            )
+                    except Exception as e:
+                        sf.complete_ingestion_log(run_id, 0, 0, status="FAILED", error=str(e))
+                        st.error(f"Ingestion failed: {e}")
+    else:
+        st.info("Add tickers to your watchlist to ingest data.")
 
 
 # ============================================================
@@ -528,13 +541,9 @@ elif page == "Alerts":
     with col1:
         show_acknowledged = st.checkbox("Show acknowledged alerts", value=False)
     with col2:
-        try:
-            watchlist = sf.get_watchlist(active_only=True)
-        except Exception:
-            watchlist = []
         filter_ticker = st.selectbox(
             "Filter by ticker",
-            ["All"] + [item.get("TICKER", "") for item in watchlist],
+            ["All"] + [item.get("TICKER", "") for item in current_watchlist],
         )
 
     params = {}
@@ -579,19 +588,14 @@ elif page == "Alerts":
 elif page == "Analytics":
     st.header("Cross-Company Analytics")
 
-    try:
-        watchlist = sf.get_watchlist(active_only=True)
-    except Exception:
-        watchlist = []
-
-    if not watchlist:
+    if not current_watchlist:
         st.info("Add tickers to your watchlist to see analytics.")
     else:
         days = st.slider("Lookback (days)", min_value=7, max_value=365, value=90, key="analytics_days")
 
         # Collect summaries for all tickers
         summaries = []
-        for item in watchlist:
+        for item in current_watchlist:
             ticker = item.get("TICKER", "")
             summary = sf.get_transaction_summary(ticker, days=days)
             if summary:

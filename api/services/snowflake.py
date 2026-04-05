@@ -391,6 +391,18 @@ def acknowledge_alert(alert_id: str) -> bool:
 # --- Ingestion log ---
 
 
+def get_ingestion_log_summary() -> list[dict]:
+    """Get the latest ingestion status per ticker."""
+    return _execute(
+        "SELECT TICKER, STATUS, COMPLETED_AT, FILINGS_PROCESSED, TRANSACTIONS_INSERTED "
+        "FROM INGESTION_LOG "
+        "WHERE (TICKER, STARTED_AT) IN ("
+        "  SELECT TICKER, MAX(STARTED_AT) FROM INGESTION_LOG GROUP BY TICKER"
+        ") "
+        "ORDER BY TICKER"
+    )
+
+
 def create_ingestion_log(ticker: str) -> str:
     """Create a new ingestion log entry and return its run_id."""
     run_id = str(uuid.uuid4())
